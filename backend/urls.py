@@ -16,13 +16,22 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from api.views import (test_cassandra, ingest_metrics, list_servers, latest_metrics, historical_metrics)
+from api.views import (ingest_metrics, list_servers, latest_metrics, historical_metrics,
+    alert_rules, open_alerts, alert_history, resolve_alert_view,)
+
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("api/test-cassandra/", test_cassandra),
+
+    # Metrics
     path("api/metrics/ingest/", ingest_metrics, name="metrics-ingest"),
     path("api/servers/", list_servers, name="list-servers"),
     path("api/metrics/latest/", latest_metrics, name="latest-metrics"),
     path("api/metrics/history/", historical_metrics, name="historical-metrics"),
+
+    # Alerts
+    path("api/alerts/rules/", alert_rules, name="alert-rules"),
+    path("api/alerts/open/", open_alerts, name="open-alerts"),
+    path("api/alerts/history/", alert_history, name="alert-history"),
+    path("api/alerts/resolve/", resolve_alert_view, name="resolve-alert"),
 ]

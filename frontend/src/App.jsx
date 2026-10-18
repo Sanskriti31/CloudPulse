@@ -29,6 +29,11 @@ function formatBytes(value) {
   return `${size.toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
 }
 
+function formatRate(value) {
+  const text = formatBytes(value);
+  return text === "—" ? text : `${text}/s`;
+}
+
 function App() {
   const [historyMetrics, setHistoryMetrics] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -39,6 +44,12 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState(null);
+
+  const [openAlerts, setOpenAlerts] = useState([]);
+  const [alertHistory, setAlertHistory] = useState([]);
+  const [alertError, setAlertError] = useState("");
+  const [resolvingId, setResolvingId] = useState("");
+  const [alertRefresh, setAlertRefresh] = useState(0);
 
   // Load the registered servers.
   useEffect(() => {
@@ -128,6 +139,84 @@ function App() {
       clearInterval(timer);
     };
   }, [selectedServerId]);
+
+    // Load server-side alerts: open alerts for this server + recent history.
+  useEffect(() => {
+    if (!selectedServerId) return;
+
+    let active = true;
+
+    async function loadAlerts() {
+      try {
+        const [openRes, historyRes] = await Promise.all([
+          fetch(`${API_BASE}/alerts/open/?org_id=local`),
+          fetch(
+            `${API_BASE}/alerts/history/?server_id=${encodeURIComponent(
+              selectedServerId
+            )}&limit=10`
+          ),
+        ]);
+
+        const openData = await openRes.json();
+        const historyData = await historyRes.json();
+
+        if (!openRes.ok || openData.status !== "success") {
+          throw new Error(openData.message || "Could not load alerts.");
+        }
+        if (!historyRes.ok || historyData.status !== "success") {
+          throw new Error(historyData.message || "Could not load alert history.");
+        }
+
+        if (active) {
+          setOpenAlerts(
+            (openData.alerts || []).filter(
+              (alert) => alert.server_id === selectedServerId
+            )
+          );
+          setAlertHistory(historyData.events || []);
+          setAlertError("");
+        }
+      } catch (err) {
+        if (active) setAlertError(err.message);
+      }
+    }
+
+    loadAlerts();
+    const timer = setInterval(loadAlerts, 10000);
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [selectedServerId, alertRefresh]);
+
+  async function resolveAlert(alert) {
+    setResolvingId(alert.event_id);
+
+    try {
+      const response = await fetch(`${API_BASE}/alerts/resolve/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          server_id: alert.server_id,
+          rule_id: alert.rule_id,
+          resolved_by: "dashboard",
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || data.status !== "success") {
+        throw new Error(data.message || "Could not resolve alert.");
+      }
+
+      setAlertRefresh((n) => n + 1);   // reload the panel straight away
+    } catch (err) {
+      setAlertError(err.message);
+    } finally {
+      setResolvingId("");
+    }
+  }
 
       useEffect(() => {
   if (!selectedServerId) {
@@ -250,17 +339,6 @@ function App() {
 
   const alerts = [];
 
-  if (cpu !== null && cpu > 90) {
-    alerts.push("CPU usage is above 90%.");
-  }
-
-  if (memory !== null && memory > 85) {
-    alerts.push("Memory usage is above 85%.");
-  }
-
-  if (disk !== null && disk > 90) {
-    alerts.push("Disk usage is above 90%.");
-  }
 
   const cards = [
     {
@@ -281,16 +359,16 @@ function App() {
       description: "Usage of the monitored drive",
       icon: "▣",
     },
-    {
-      title: "Network Sent",
-      value: formatBytes(metricMap.network_sent_bytes?.metric_value),
-      description: "Cumulative bytes sent since boot",
+        {
+      title: "Network Upload",
+      value: formatRate(metricMap.network_sent_bps?.metric_value),
+      description: "Average upload rate over the last interval",
       icon: "↑",
     },
     {
-      title: "Network Received",
-      value: formatBytes(metricMap.network_recv_bytes?.metric_value),
-      description: "Cumulative bytes received since boot",
+      title: "Network Download",
+      value: formatRate(metricMap.network_recv_bps?.metric_value),
+      description: "Average download rate over the last interval",
       icon: "↓",
     },
   ];
@@ -650,42 +728,127 @@ function App() {
 </section>
 
         <section style={styles.panel}>
-          <h2 style={{ margin: "0 0 8px", fontSize: "20px" }}>
-            Threshold Alerts
-          </h2>
+          <h2 style={{ margin: "0 0 8px", fontSize: "20px" }}>Alerts</h2>
           <p style={{ ...styles.muted, marginTop: 0 }}>
-            CPU above 90%, memory above 85%, or disk above 90%.
+            Evaluated on the server by the alert engine and stored in Cassandra.
           </p>
 
-          {alerts.length > 0 ? (
-            alerts.map((alert) => (
-              <div
-                key={alert}
-                style={{
-                  padding: "12px 14px",
-                  borderRadius: "8px",
-                  background: "#fff4e5",
-                  color: "#92400e",
-                  border: "1px solid #fed7aa",
-                  marginTop: "10px",
-                }}
-              >
-                ⚠ {alert}
-              </div>
-            ))
-          ) : (
-            <p
-              style={{
-                margin: "16px 0 0",
-                color: "#536174",
-                fontSize: "14px",
-              }}
-            >
-              {metrics.length === 0
-                ? "No metrics have been loaded yet."
-                : "No threshold alerts based on the latest readings."}
+          {alertError && (
+            <p role="alert" style={{ color: "#b91c1c", fontSize: "14px" }}>
+              {alertError}
             </p>
           )}
+
+          {openAlerts.length > 0 ? (
+            openAlerts.map((alert) => {
+              const critical = alert.severity === "CRITICAL";
+              return (
+                <div
+                  key={alert.event_id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "12px",
+                    padding: "12px 14px",
+                    borderRadius: "8px",
+                    marginTop: "10px",
+                    background: critical ? "#fee2e2" : "#fff4e5",
+                    color: critical ? "#991b1b" : "#92400e",
+                    border: `1px solid ${critical ? "#fecaca" : "#fed7aa"}`,
+                  }}
+                >
+                  <span>
+                    ⚠ <strong>{alert.rule_name}</strong> ({alert.severity}) ·{" "}
+                    {alert.metric_type} was{" "}
+                    {Number(alert.triggered_value).toFixed(1)} (threshold{" "}
+                    {alert.threshold}) · open since{" "}
+                    {new Date(alert.opened_at).toLocaleTimeString()}
+                  </span>
+                  <button
+                    onClick={() => resolveAlert(alert)}
+                    disabled={resolvingId === alert.event_id}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "6px",
+                      border: "1px solid currentColor",
+                      background: "#ffffff",
+                      color: "inherit",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {resolvingId === alert.event_id ? "Resolving…" : "Resolve"}
+                  </button>
+                </div>
+              );
+            })
+          ) : (
+            <p style={{ margin: "16px 0 0", color: "#536174", fontSize: "14px" }}>
+              No open alerts for this server.
+            </p>
+          )}
+
+          <h3 style={{ margin: "24px 0 8px", fontSize: "16px" }}>
+            Recent alert history
+          </h3>
+
+          {alertHistory.length > 0 ? (
+            <div style={{ overflowX: "auto" }}>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: "13px",
+                }}
+              >
+                <thead>
+                  <tr style={{ textAlign: "left", color: "#536174" }}>
+                    <th style={{ padding: "6px" }}>Opened</th>
+                    <th style={{ padding: "6px" }}>Metric</th>
+                    <th style={{ padding: "6px" }}>Severity</th>
+                    <th style={{ padding: "6px" }}>Value</th>
+                    <th style={{ padding: "6px" }}>Status</th>
+                    <th style={{ padding: "6px" }}>Resolved by</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {alertHistory.map((event) => (
+                    <tr
+                      key={event.event_id}
+                      style={{ borderTop: "1px solid #e5e7eb" }}
+                    >
+                      <td style={{ padding: "6px" }}>
+                        {new Date(event.opened_at).toLocaleString()}
+                      </td>
+                      <td style={{ padding: "6px" }}>{event.metric_type}</td>
+                      <td style={{ padding: "6px" }}>{event.severity}</td>
+                      <td style={{ padding: "6px" }}>
+                        {Number(event.triggered_value).toFixed(1)}
+                      </td>
+                      <td
+                        style={{
+                          padding: "6px",
+                          fontWeight: 600,
+                          color: event.status === "OPEN" ? "#b45309" : "#15803d",
+                        }}
+                      >
+                        {event.status}
+                      </td>
+                      <td style={{ padding: "6px" }}>
+                        {event.resolved_by || "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p style={{ margin: 0, color: "#536174", fontSize: "14px" }}>
+              No alerts recorded this month.
+            </p>
+          )}
+        
         </section>
 
         <div
@@ -698,6 +861,7 @@ function App() {
         >
           CloudPulse · React · Django · Apache Cassandra
         </div>
+
       </main>
     </div>
   );

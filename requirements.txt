@@ -1,4 +1,9 @@
+# API
 Django==6.1.2
 djangorestframework
 django-cors-headers
 cassandra-driver
+
+# Monitoring agent
+psutil==7.2.2
+requests==2.34.2
