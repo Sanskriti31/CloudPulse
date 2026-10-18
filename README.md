@@ -4,7 +4,7 @@ A cloud observability platform that collects infrastructure metrics from monitor
 
 Built for the M.Tech Database Modelling and Design Lab (MACSE518), VIT.
 
-**Team:** _add names and registration numbers here_
+**Team:** Navya Mongia, Sunidhi Raichur, Sanskriti Singh
 
 ---
 
