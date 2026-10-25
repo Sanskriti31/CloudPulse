@@ -9,7 +9,7 @@ https://docs.djangoproject.com/en/6.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
-
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -140,3 +140,11 @@ MAILERS = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
 ]
+
+# Cassandra connection
+CASSANDRA_HOSTS = ["127.0.0.1"]   # cass1, published on port 9042
+CASSANDRA_PORT = 9042
+CASSANDRA_KEYSPACE = "cloudpulse"
+# ONE, LOCAL_QUORUM, QUORUM or ALL. Override per run for experiments:
+#   $env:CASSANDRA_CONSISTENCY = "ONE"; python manage.py runserver
+CASSANDRA_CONSISTENCY = os.environ.get("CASSANDRA_CONSISTENCY", "LOCAL_QUORUM")

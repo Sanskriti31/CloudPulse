@@ -1,7 +1,7 @@
 ﻿CREATE KEYSPACE IF NOT EXISTS cloudpulse
 WITH REPLICATION = {
-    'class': 'SimpleStrategy',
-    'replication_factor': 1
+    'class': 'NetworkTopologyStrategy',
+    'datacenter1': 3
 };
 
 CREATE TABLE IF NOT EXISTS cloudpulse.server_by_id (
@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS cloudpulse.servers_by_org (
     PRIMARY KEY ((org_id), server_id)
 );
 
+-- Raw metrics: one partition per server per day.
+-- 30-day TTL; TWCS with 1-day windows drops whole expired files.
 CREATE TABLE IF NOT EXISTS cloudpulse.metrics_by_server_bucket (
     server_id uuid,
     bucket_date date,
@@ -33,11 +35,16 @@ CREATE TABLE IF NOT EXISTS cloudpulse.metrics_by_server_bucket (
     metric_value double,
     unit text,
     PRIMARY KEY ((server_id, bucket_date), metric_time, metric_type)
-) WITH CLUSTERING ORDER BY (
-    metric_time DESC,
-    metric_type ASC
-);
+) WITH CLUSTERING ORDER BY (metric_time DESC, metric_type ASC)
+  AND default_time_to_live = 604800
+  AND gc_grace_seconds = 86400
+  AND compaction = {
+      'class': 'TimeWindowCompactionStrategy',
+      'compaction_window_unit': 'DAYS',
+      'compaction_window_size': 1
+  };
 
+-- Current value per metric. No TTL: it always holds the newest reading.
 CREATE TABLE IF NOT EXISTS cloudpulse.latest_metric_by_server (
     server_id uuid,
     metric_type text,

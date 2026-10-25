@@ -1,0 +1,13 @@
+run_at,operation,consistency,n,mean_ms,p50_ms,p95_ms,p99_ms,max_ms,ops_per_sec,result
+2026-10-25 19:13:34,write (Phase 1 ingest),ONE,500,15.1,15.65,17.47,19.14,28.52,66.2,ok
+2026-10-25 19:13:34,read (latest values),ONE,500,15.68,15.71,17.11,18.71,24.81,63.8,ok
+2026-10-25 19:13:34,write (Phase 1 ingest),LOCAL_QUORUM,500,15.67,15.63,17.56,18.88,29.73,63.8,ok
+2026-10-25 19:13:34,read (latest values),LOCAL_QUORUM,500,14.56,15.5,18.62,20.44,22.56,68.7,ok
+2026-10-25 19:13:34,write (Phase 1 ingest),ALL,500,15.66,15.59,17.94,18.86,25.13,63.8,ok
+2026-10-25 19:13:34,read (latest values),ALL,500,13.55,15.34,18.55,24.26,34.37,73.8,ok
+2026-10-25 19:15:49,write (Phase 1 ingest),ONE,500,15.03,15.67,22.05,31.58,61.82,66.5,ok
+2026-10-25 19:15:49,read (latest values),ONE,500,14.41,15.63,17.0,18.14,18.71,69.4,ok
+2026-10-25 19:15:49,write (Phase 1 ingest),LOCAL_QUORUM,500,15.71,15.62,18.48,20.61,34.26,63.6,ok
+2026-10-25 19:15:49,read (latest values),LOCAL_QUORUM,500,15.65,15.7,17.26,18.65,20.26,63.9,ok
+2026-10-25 19:15:49,write (Phase 1 ingest),ALL,0,-,-,-,-,-,0,NoHostAvailable
+2026-10-25 19:15:49,read (latest values),ALL,0,-,-,-,-,-,0,NoHostAvailable

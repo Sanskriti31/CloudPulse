@@ -1,0 +1,2 @@
+run_at,raw_rows,raw_per_metric_rows,rollup_1m_rows,rollup_1h_rows,requests,seconds,rows_per_sec
+2026-10-25 19:06:48,86400,86400,216000,3600,20550,37.9,10367

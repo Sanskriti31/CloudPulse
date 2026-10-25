@@ -1,0 +1,5 @@
+run_at,query,design,partitions,rows_read,p50_ms,p95_ms
+2026-10-25 19:17:07,"CPU only, 1 day",per server-day (current raw table),1,43200,352.9,388.13
+2026-10-25 19:17:07,"CPU only, 1 day",per server-metric-day (alternative),1,8640,64.57,121.89
+2026-10-25 19:17:07,"all 5 metrics, 1 day",per server-day (current raw table),1,43200,394.46,435.74
+2026-10-25 19:17:07,"all 5 metrics, 1 day",per server-metric-day (alternative),5,43200,252.4,286.8

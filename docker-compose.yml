@@ -1,0 +1,58 @@
+# CloudPulse: 3-node Apache Cassandra cluster (one data centre, one rack).
+# Start:  docker compose up -d     Stop: docker compose stop
+x-cassandra-env: &cassandra-env
+  CASSANDRA_CLUSTER_NAME: CloudPulseCluster
+  CASSANDRA_SEEDS: cass1,cass2
+  CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+  CASSANDRA_DC: datacenter1
+  CASSANDRA_RACK: rack1
+  MAX_HEAP_SIZE: 512M          # small heap so 3 nodes fit on a laptop
+  HEAP_NEWSIZE: 128M
+
+x-healthcheck: &healthcheck
+  test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' > /dev/null 2>&1 || exit 1"]
+  interval: 15s
+  timeout: 10s
+  retries: 30
+  start_period: 60s
+
+services:
+  cass1:
+    image: cassandra:4.1
+    container_name: cass1
+    hostname: cass1
+    ports:
+      - "9042:9042"            # Django connects here
+    environment: *cassandra-env
+    volumes:
+      - cass1-data:/var/lib/cassandra
+    healthcheck: *healthcheck
+
+  cass2:
+    image: cassandra:4.1
+    container_name: cass2
+    hostname: cass2
+    environment: *cassandra-env
+    volumes:
+      - cass2-data:/var/lib/cassandra
+    healthcheck: *healthcheck
+    depends_on:
+      cass1:
+        condition: service_healthy   # nodes must join one at a time
+
+  cass3:
+    image: cassandra:4.1
+    container_name: cass3
+    hostname: cass3
+    environment: *cassandra-env
+    volumes:
+      - cass3-data:/var/lib/cassandra
+    healthcheck: *healthcheck
+    depends_on:
+      cass2:
+        condition: service_healthy
+
+volumes:
+  cass1-data:
+  cass2-data:
+  cass3-data:

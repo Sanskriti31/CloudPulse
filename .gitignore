@@ -180,4 +180,4 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 agent/.server_id*
-git rm --cached agent/.server_id
+agent/demo.log

@@ -1,0 +1,5 @@
+run_at,strategy,requests_per_ingest,n,mean_ms,p50_ms,p95_ms,p99_ms,max_ms,ingests_per_sec
+2026-10-25 19:11:11,"naive: strings + LWT, 14 sequential",14,500,217.74,219.68,222.81,233.52,237.37,4.6
+2026-10-25 19:11:11,"prepared, 12 sequential",12,500,186.27,188.34,190.96,193.3,202.21,5.4
+2026-10-25 19:11:11,prepared + 3 async batches (Phase 1),3,500,15.72,15.62,17.84,20.17,24.2,63.6
+2026-10-25 19:11:11,"Phase 1 batches, 32 in flight",3,500,-,-,-,-,-,851.0
