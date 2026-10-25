@@ -1,6 +1,6 @@
 # CloudPulse
 
-A cloud observability platform that collects server metrics and logs, stores them as time-series data in a **3-node Apache Cassandra cluster**, raises alerts on the server side, and shows everything on a live **React** dashboard.
+A cloud observability platform that collects server metrics and logs, stores them as time-series data in a **3-node Apache Cassandra cluster**, raises alerts on the server side, and shows everything in a five-page **React** web app: overview, server detail, alerts, alert rules and logs.
 
 Built for the M.Tech Database Modelling and Design Lab (MACSE518), School of Computer Science and Engineering, VIT.
 
@@ -39,7 +39,8 @@ Built for the M.Tech Database Modelling and Design Lab (MACSE518), School of Com
                                      GET (every 10 s)          |  rollup_metrics --loop       |
                                                     |          +------------------------------+
                                            +-----------------+   builds 1-min / 1-hour rollups
-                                           | React dashboard |
+                                           | React web app   |
+                                           | (5 pages)       |
                                            +-----------------+
 ```
 
@@ -50,7 +51,7 @@ Built for the M.Tech Database Modelling and Design Lab (MACSE518), School of Com
 | Rollup job | `api/rollups.py`, `api/management/commands/` | Django management command |
 | Database schema | `database/` | CQL |
 | Cassandra cluster | `docker-compose.yml` | Apache Cassandra 4.1, 3 nodes |
-| Dashboard | `frontend/` | React, Vite, Recharts |
+| Web app (5 pages) | `frontend/` | React, Vite, Recharts |
 | Benchmarks | `bench/` | Python |
 
 ---
@@ -122,7 +123,8 @@ The schema is **query-first**: each table answers one question the application a
 - Rules support a duration ("CPU > 90% for 30 s") via a PENDING state, so short spikes don't fire.
 - Opening and resolving an alert each update four tables in one `LOGGED BATCH`.
 - The resolve `UPDATE` sets the **remaining** TTL, so the whole history row expires together.
-- Disabled or deleted rules automatically close their open alerts.
+- Disabled or deleted rules close their open alerts straight away.
+- Rule edits and deletes use `UPDATE … IF EXISTS` / `DELETE … IF EXISTS` (lightweight transactions). In Cassandra a plain UPDATE of a missing row creates it, so without `IF EXISTS` an edit sent after a delete would bring back a "ghost" rule. Now it returns 404.
 
 **Logs**
 - A second table partitioned by level answers "show only errors" from one partition.
@@ -225,7 +227,7 @@ python agent/monitor.py --api-url http://<api-ip>:8000/api/metrics/ingest/ --hos
 
 The API machine must then run `python manage.py runserver 0.0.0.0:8000` and list its IP in `ALLOWED_HOSTS`.
 
-### 6. Start the dashboard
+### 6. Start the web app
 
 ```powershell
 cd frontend
@@ -234,6 +236,16 @@ npm run dev
 ```
 
 Open **http://localhost:5173**. Use `localhost`, not `127.0.0.1`, because that's the origin allowed by CORS.
+
+| Page | Address | What it does |
+|---|---|---|
+| Overview | `/` | Server count, up / stale-or-down, open alerts; every server with live CPU, memory and disk |
+| Servers | `/servers/<server_id>` | One server: status, live values, history charts (today / 7 days / 30 days) and recent alerts |
+| Alerts | `/alerts` | Open alerts across all servers with Resolve; history by server or by rule (1, 3 or 6 months) |
+| Alert rules | `/rules` | Create, edit, enable/disable and delete rules |
+| Logs | `/logs` | Logs by server and day, level filter, text search, Load older |
+
+Each page ends with the Cassandra tables it reads and writes. Navigation uses a small built-in router in `src/lib.js` (no extra packages). Vite serves `index.html` for every address, so refreshing any page works.
 
 ### Stopping and restarting
 
@@ -314,6 +326,8 @@ Ingest payload:
 |---|---|---|
 | GET | `/api/alerts/rules/?org_id=local` | List rules |
 | POST | `/api/alerts/rules/` | Create a rule (rule names are unique per organization; a duplicate returns 409) |
+| PUT | `/api/alerts/rules/<rule_id>/?org_id=local` | Update a rule (full rule body, as for create). Uses `IF EXISTS`: 404 if the rule is gone, 409 if the new name is taken. Disabling closes its open alerts. |
+| DELETE | `/api/alerts/rules/<rule_id>/?org_id=local` | Delete a rule. Uses `IF EXISTS`: 404 if it is already gone. Closes its open alerts. |
 | GET | `/api/alerts/open/?org_id=local` | Open alerts, critical first |
 | GET | `/api/alerts/history/?server_id=` or `?rule_id=` | History, newest first. Optional `months` (1–6) and `limit` (1–500). |
 | POST | `/api/alerts/resolve/` | Resolve an open alert by hand |
@@ -475,7 +489,8 @@ docker exec cass1 nodetool repair cloudpulse
 
 ## Known limitations
 
-- **No authentication.** The ingest, rule and resolve endpoints are open. Development settings are still in place (`DEBUG = True`, hardcoded `SECRET_KEY`).
+- **No authentication.** The ingest, rule (create, update, delete) and resolve endpoints are open, so anyone who can reach the API can change rules. Development settings are still in place (`DEBUG = True`, hardcoded `SECRET_KEY`).
+- **One organization in the web app.** The front end uses `org_id = "local"`; the API supports more.
 - **One coordinator from Windows.** Docker Desktop doesn't expose the containers' internal IPs to the host, so the driver uses only `cass1` (`WhiteListRoundRobinPolicy`), and stopping `cass1` stops the app. In a real deployment, the app runs on the cluster's network, lists all nodes and uses `TokenAwarePolicy`.
 - **Development web server.** `runserver` limits API throughput to about 200–300 requests per second.
 - **Log search** filters one page at a time. Full-text search would need Cassandra 5's SAI indexes or a search engine.
@@ -493,9 +508,10 @@ docker exec cass1 nodetool repair cloudpulse
 4. ~~3-node cluster, replication and consistency experiments~~ (done)
 5. ~~Benchmarks: ingest throughput and query latency under load~~ (done)
 6. ~~Log ingestion and filtering~~ (done)
-7. Per-agent API tokens, Admin/Viewer roles and an audit log
-8. Re-run the consistency benchmarks from a Linux container on the cluster network
-9. Production deployment: gunicorn/uvicorn behind a reverse proxy, settings from environment variables
+7. ~~Five-page web app with full rule management (create, edit, enable/disable, delete)~~ (done)
+8. Per-agent API tokens, Admin/Viewer roles and an audit log
+9. Re-run the consistency benchmarks from a Linux container on the cluster network
+10. Production deployment: gunicorn/uvicorn behind a reverse proxy, settings from environment variables
 
 ---
 
@@ -522,7 +538,15 @@ database/
   03_rollups_schema.cql      1-minute and 1-hour rollups
   04_logs_schema.cql         log tables
 frontend/
-  src/App.jsx             dashboard
+  src/App.jsx             layout, navigation and page switch
+  src/lib.js              API helpers, polling, server list, tiny router
+  src/components.jsx      shared pieces (gauge, status, page header, tables used)
+  src/pages/
+    OverviewPage.jsx      page 1: all servers and open alerts
+    ServerPage.jsx        page 2: one server, live values and history
+    AlertsPage.jsx        page 3: open alerts and history by server or rule
+    RulesPage.jsx         page 4: rule create, edit, enable/disable, delete
+    LogsPage.jsx          page 5: log explorer
   src/App.css, index.css  styles
 docker-compose.yml        3-node Cassandra cluster
 requirements.txt          Python dependencies

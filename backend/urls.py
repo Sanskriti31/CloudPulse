@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from api.views import (ingest_metrics, list_servers, latest_metrics, historical_metrics,
-    alert_rules, open_alerts, alert_history, resolve_alert_view,
+    alert_rules, alert_rule_detail, open_alerts, alert_history, resolve_alert_view,
     ingest_logs, list_logs,)
 
 
@@ -32,6 +32,7 @@ urlpatterns = [
 
     # Alerts
     path("api/alerts/rules/", alert_rules, name="alert-rules"),
+    path("api/alerts/rules/<uuid:rule_id>/", alert_rule_detail, name="alert-rule-detail"),
     path("api/alerts/open/", open_alerts, name="open-alerts"),
     path("api/alerts/history/", alert_history, name="alert-history"),
     path("api/alerts/resolve/", resolve_alert_view, name="resolve-alert"),

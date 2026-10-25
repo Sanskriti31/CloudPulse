@@ -181,3 +181,5 @@ cython_debug/
 .cursorindexingignore
 agent/.server_id*
 agent/demo.log
+cp_export/
+cp_export.zip

@@ -1070,6 +1070,8 @@ def event_to_dict(row):
         "server_id": str(row.server_id),
         "rule_id": str(row.rule_id),
         "org_id": row.org_id,
+        "rule_name": getattr(row, "rule_name", None),   # by-server table
+        "hostname": getattr(row, "hostname", None),     # by-rule table
         "metric_type": row.metric_type,
         "severity": row.severity,
         "threshold": row.threshold,
@@ -1082,109 +1084,160 @@ def event_to_dict(row):
     }
 
 
+# ---- Rule CRUD (create, read, update, delete) ----
+
+UPDATE_RULE_IF_EXISTS = cloud_session.prepare("""
+    UPDATE alert_rules_by_org
+    SET rule_name = ?, metric_type = ?, operator = ?, threshold = ?,
+        duration_seconds = ?, severity = ?, server_id = ?, enabled = ?,
+        updated_at = ?
+    WHERE org_id = ? AND rule_id = ?
+    IF EXISTS
+""")
+DELETE_RULE_IF_EXISTS = cloud_session.prepare("""
+    DELETE FROM alert_rules_by_org
+    WHERE org_id = ? AND rule_id = ?
+    IF EXISTS
+""")
+
+
+def parse_rule(payload):
+    """Validate a rule body (used by create and update). Raises ValueError."""
+    rule = {
+        "rule_name": str(payload["rule_name"]).strip(),
+        "metric_type": payload["metric_type"],
+        "operator": payload["operator"],
+        "threshold": float(payload["threshold"]),
+        "duration_seconds": int(payload.get("duration_seconds", 0)),
+        "severity": str(payload.get("severity", "WARNING")).upper(),
+        "enabled": bool(payload.get("enabled", True)),
+        "server_id": UUID(payload["server_id"]) if payload.get("server_id") else None,
+    }
+    if not rule["rule_name"] or len(rule["rule_name"]) > 100:
+        raise ValueError("Rule name is required (max 100 characters)")
+    if rule["metric_type"] not in ALLOWED_METRICS:
+        raise ValueError("Unsupported metric type")
+    if rule["operator"] not in OPERATORS:
+        raise ValueError("Operator must be one of >, >=, <, <=")
+    if not math.isfinite(rule["threshold"]):
+        raise ValueError("Threshold must be a finite number")
+    if not 0 <= rule["duration_seconds"] <= 3600:
+        raise ValueError("duration_seconds must be between 0 and 3600")
+    if rule["severity"] not in SEVERITIES:
+        raise ValueError("Severity must be WARNING or CRITICAL")
+    return rule
+
+
+def name_taken(org_id, rule_name, ignore_rule_id=None):
+    """Cassandra has no UNIQUE constraint, so the API checks rule names."""
+    for row in cloud_session.execute(SELECT_RULES, (org_id,)):
+        if row.rule_id == ignore_rule_id:
+            continue
+        if (row.rule_name or "").strip().lower() == rule_name.lower():
+            return True
+    return False
+
+
+def close_rule_alerts(org_id, rule_id, reason):
+    """Resolve every open alert of a rule now (rule deleted or disabled)."""
+    now = datetime.now(timezone.utc)
+    closed = 0
+    for row in cloud_session.execute(SELECT_OPEN_ORG, (org_id,)):
+        if row.rule_id != rule_id:
+            continue
+        state = cloud_session.execute(SELECT_STATE, (row.server_id, rule_id)).one()
+        if state is not None:
+            closed += close_state(state, state.last_value, now, reason)
+    return closed
+
+
+def bad_request(message, status=400):
+    return JsonResponse({"status": "error", "message": message}, status=status)
+
+
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def alert_rules(request):
     """GET: list an org's rules.  POST: create a rule."""
-
     if request.method == "GET":
         org_id = request.GET.get("org_id", "local")
         try:
             rows = cloud_session.execute(SELECT_RULES, (org_id,))
-            rules = sorted(
-                (rule_to_dict(row) for row in rows),
-                key=lambda r: r["rule_name"] or "",
-            )
-            return JsonResponse({
-                "status": "success",
-                "count": len(rules),
-                "rules": rules,
-            })
+            rules = sorted((rule_to_dict(row) for row in rows),
+                           key=lambda r: (r["rule_name"] or "").lower())
+            return JsonResponse({"status": "success", "count": len(rules), "rules": rules})
         except Exception as error:
             print(f"CloudPulse rules error: {error}")
-            return JsonResponse(
-                {"status": "error", "message": "Could not load rules."},
-                status=500,
-            )
+            return bad_request("Could not load rules.", 500)
 
-    # POST: create a rule
     try:
         payload = json.loads(request.body)
-
         org_id = str(payload.get("org_id", "local")).strip()
-        rule_name = str(payload["rule_name"]).strip()
-        metric_type = payload["metric_type"]
-        rule_operator = payload["operator"]
-        threshold = float(payload["threshold"])
-        duration_seconds = int(payload.get("duration_seconds", 0))
-        severity = str(payload.get("severity", "WARNING")).upper()
-        enabled = bool(payload.get("enabled", True))
-        created_by = str(payload.get("created_by", "admin"))
-        server_id = (
-            UUID(payload["server_id"]) if payload.get("server_id") else None
-        )
-
         if not org_id or len(org_id) > 100:
             raise ValueError("Invalid organization ID")
-        if not rule_name or len(rule_name) > 100:
-            raise ValueError("Rule name is required (max 100 characters)")
-        if metric_type not in ALLOWED_METRICS:
-            raise ValueError("Unsupported metric type")
-        if rule_operator not in OPERATORS:
-            raise ValueError("Operator must be one of >, >=, <, <=")
-        if not math.isfinite(threshold):
-            raise ValueError("Threshold must be a finite number")
-        if not 0 <= duration_seconds <= 3600:
-            raise ValueError("duration_seconds must be between 0 and 3600")
-        if severity not in SEVERITIES:
-            raise ValueError("Severity must be WARNING or CRITICAL")
-
+        rule = parse_rule(payload)
+        created_by = str(payload.get("created_by", "admin"))[:100]
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
-        return JsonResponse(
-            {"status": "error", "message": f"Invalid rule: {error}"},
-            status=400,
-        )
-
-    # Cassandra has no UNIQUE constraint, so the API enforces
-    # one rule name per organization.
-    try:
-        existing = cloud_session.execute(SELECT_RULES, (org_id,))
-        if any((row.rule_name or "").strip().lower() == rule_name.lower()
-               for row in existing):
-            return JsonResponse({
-                "status": "error",
-                "message": f"A rule named '{rule_name}' already exists.",
-            }, status=409)
-    except Exception as error:
-        print(f"CloudPulse rule check error: {error}")
-        return JsonResponse(
-            {"status": "error", "message": "Could not check existing rules."},
-            status=500,
-        )
-
-    now = datetime.now(timezone.utc)
-    rule_id = uuid4()
+        return bad_request(f"Invalid rule: {error}")
 
     try:
+        if name_taken(org_id, rule["rule_name"]):
+            return bad_request(f"A rule named '{rule['rule_name']}' already exists.", 409)
+        now = datetime.now(timezone.utc)
+        rule_id = uuid4()
         cloud_session.execute(INSERT_RULE, (
-            org_id, rule_id, rule_name, metric_type, rule_operator,
-            threshold, duration_seconds, severity, server_id, enabled,
-            created_by, now, now,
+            org_id, rule_id, rule["rule_name"], rule["metric_type"], rule["operator"],
+            rule["threshold"], rule["duration_seconds"], rule["severity"],
+            rule["server_id"], rule["enabled"], created_by, now, now,
         ))
     except Exception as error:
         print(f"CloudPulse rule insert error: {error}")
-        return JsonResponse(
-            {"status": "error", "message": "Could not save rule."},
-            status=500,
-        )
+        return bad_request("Could not save rule.", 500)
 
-    _rule_cache.pop(org_id, None)    # engine picks up the new rule now
+    _rule_cache.pop(org_id, None)      # the engine picks up the new rule now
+    return JsonResponse({"status": "success", "rule_id": str(rule_id)}, status=201)
 
-    return JsonResponse(
-        {"status": "success", "rule_id": str(rule_id)},
-        status=201,
-    )
 
+@csrf_exempt
+@require_http_methods(["PUT", "DELETE"])
+def alert_rule_detail(request, rule_id):
+    """PUT: update a rule.  DELETE: delete it.  Both use IF EXISTS (LWT)."""
+    org_id = request.GET.get("org_id", "local")
+
+    if request.method == "DELETE":
+        try:
+            result = cloud_session.execute(DELETE_RULE_IF_EXISTS, (org_id, rule_id))
+            if not result.was_applied:
+                return bad_request("Rule not found.", 404)
+            _rule_cache.pop(org_id, None)
+            closed = close_rule_alerts(org_id, rule_id, "rule-deleted")
+        except Exception as error:
+            print(f"CloudPulse rule delete error: {error}")
+            return bad_request("Could not delete rule.", 500)
+        return JsonResponse({"status": "success", "alerts_closed": closed})
+
+    # PUT: the body holds the full rule, as for create
+    try:
+        rule = parse_rule(json.loads(request.body))
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+        return bad_request(f"Invalid rule: {error}")
+
+    try:
+        if name_taken(org_id, rule["rule_name"], ignore_rule_id=rule_id):
+            return bad_request(f"A rule named '{rule['rule_name']}' already exists.", 409)
+        result = cloud_session.execute(UPDATE_RULE_IF_EXISTS, (
+            rule["rule_name"], rule["metric_type"], rule["operator"], rule["threshold"],
+            rule["duration_seconds"], rule["severity"], rule["server_id"],
+            rule["enabled"], datetime.now(timezone.utc), org_id, rule_id,
+        ))
+        if not result.was_applied:
+            return bad_request("Rule not found.", 404)
+        _rule_cache.pop(org_id, None)
+        closed = 0 if rule["enabled"] else close_rule_alerts(org_id, rule_id, "rule-disabled")
+    except Exception as error:
+        print(f"CloudPulse rule update error: {error}")
+        return bad_request("Could not update rule.", 500)
+    return JsonResponse({"status": "success", "alerts_closed": closed})
 
 @require_GET
 def open_alerts(request):
