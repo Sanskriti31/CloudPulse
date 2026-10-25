@@ -337,8 +337,6 @@ function App() {
   const memory = numericValue("memory_percent");
   const disk = numericValue("disk_percent");
 
-  const alerts = [];
-
 
   const cards = [
     {
