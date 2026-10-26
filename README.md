@@ -6,6 +6,8 @@ Built for the M.Tech Database Modelling and Design Lab (MACSE518), School of Com
 
 **Team:** Sanskriti Singh (26MAI0045), Navya Mongia (26MAI0054), Sunidhi Raichur (26MAI0061)
 
+**Demo video and presentation:** [CloudPulse Demo Video and PPT (Google Drive)](https://drive.google.com/drive/u/1/folders/1GFu-h1z8sSujrguyKeiY_btDaROssTRu)
+
 ---
 
 ## Contents
@@ -219,13 +221,7 @@ To also send a log file:
 python agent/monitor.py --log-file path\to\app.log
 ```
 
-The agent creates its server ID on first run and saves it in `agent/.server_id`. To send to an API on another machine:
-
-```powershell
-python agent/monitor.py --api-url http://<api-ip>:8000/api/metrics/ingest/ --hostname my-laptop
-```
-
-The API machine must then run `python manage.py runserver 0.0.0.0:8000` and list its IP in `ALLOWED_HOSTS`.
+The agent creates its server ID on first run and saves it in `agent/.server_id`. To monitor a second computer, see [step 7](#7-monitor-another-computer-optional).
 
 ### 6. Start the web app
 
@@ -246,6 +242,33 @@ Open **http://localhost:5173**. Use `localhost`, not `127.0.0.1`, because that's
 | Logs | `/logs` | Logs by server and day, level filter, text search, Load older |
 
 Each page ends with the Cassandra tables it reads and writes. Navigation uses a small built-in router in `src/lib.js` (no extra packages). Vite serves `index.html` for every address, so refreshing any page works.
+
+### 7. Monitor another computer (optional)
+
+The second computer only runs the agent. It sends its readings to Django on the main laptop; it needs no Docker, Cassandra or website.
+
+On the **main laptop**:
+
+1. Put both computers on the **same network**. College Wi-Fi often blocks traffic between devices, so a phone hotspot is the easiest choice. Keep the hotspot on during the demo: restarting it changes the IP addresses.
+2. Find the main laptop's address with `ipconfig` (the **IPv4 Address** under **Wireless LAN adapter Wi-Fi**). Ignore VirtualBox (`192.168.56.x`) and WSL (`172.x`) addresses.
+3. Allow that address in `backend/settings.py`. For a demo on a private hotspot, `ALLOWED_HOSTS = ["*"]` saves editing it each time the IP changes; switch back to an explicit list afterwards.
+4. Open port 8000 in Windows Firewall (PowerShell as Administrator):
+   ```powershell
+   New-NetFirewallRule -DisplayName "CloudPulse API 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Any
+   ```
+5. Start Django so the network can reach it: `python manage.py runserver 0.0.0.0:8000`
+
+On the **second computer**:
+
+1. Install Python 3 (tick "Add Python to PATH") and copy only `agent/monitor.py`. **Do not copy `agent/.server_id`**; the agent creates a new ID for each machine.
+2. Install the two libraries: `pip install psutil requests`
+3. Check the connection (replace `<MAIN-IP>`): `Test-NetConnection <MAIN-IP> -Port 8000` must show `TcpTestSucceeded : True`.
+4. Start the agent:
+   ```powershell
+   python monitor.py --api-url http://<MAIN-IP>:8000/api/metrics/ingest/ --hostname Sunidhi-laptop
+   ```
+
+The new machine appears on the Overview page within 10 seconds. If the agent prints `API unreachable … buffered`, the two computers are not on the same network or the firewall is blocking port 8000; it keeps about 9 minutes of reports and sends them once the connection works.
 
 ### Stopping and restarting
 
@@ -375,7 +398,7 @@ Log ingest payload:
 
 ## Benchmarks and results
 
-Two scripts in `bench/` produce every number below. Results are appended to `bench/results/*.csv`. Benchmark data uses org `bench`, so the dashboard isn't affected.
+Two scripts in `bench/` produce every number below. Results are appended to `bench/results/*.csv`. Benchmark data uses org `bench`, so the web app isn't affected.
 
 ```powershell
 python bench/db_bench.py seed          # 2 raw days + 30 days of rollups (~390,000 rows)
@@ -509,9 +532,10 @@ docker exec cass1 nodetool repair cloudpulse
 5. ~~Benchmarks: ingest throughput and query latency under load~~ (done)
 6. ~~Log ingestion and filtering~~ (done)
 7. ~~Five-page web app with full rule management (create, edit, enable/disable, delete)~~ (done)
-8. Per-agent API tokens, Admin/Viewer roles and an audit log
-9. Re-run the consistency benchmarks from a Linux container on the cluster network
-10. Production deployment: gunicorn/uvicorn behind a reverse proxy, settings from environment variables
+8. ~~Agent on a second physical machine reporting to the same cluster~~ (done)
+9. Per-agent API tokens, Admin/Viewer roles and an audit log
+10. Re-run the consistency benchmarks from a Linux container on the cluster network
+11. Production deployment: gunicorn/uvicorn behind a reverse proxy, settings from environment variables
 
 ---
 
